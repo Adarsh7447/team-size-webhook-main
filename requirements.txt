@@ -1,0 +1,33 @@
+# =============================================================================
+# Team Size Webhook API - Production Dependencies
+# =============================================================================
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Data Validation & Settings
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# HTTP Client
+httpx>=0.26.0
+
+# Retry Logic
+tenacity>=8.2.0
+
+# AI SDK
+xai-sdk>=1.0.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Logging
+structlog>=24.1.0
+
+# Redis + Celery (High Throughput - 4000+ req/min)
+redis>=5.0.0
+celery[redis]>=5.3.0

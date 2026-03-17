@@ -1,0 +1,182 @@
+# =============================================================================
+# Team Size Webhook API - Docker Compose
+# =============================================================================
+# Local development and production deployment configuration
+#
+# Usage:
+#   Development:  docker-compose up --build
+#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Scale workers: docker-compose up -d --scale celery-worker=4
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # FastAPI Web Application
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: team-size-api
+    env_file:
+      - .env.local
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      # Server
+      - HOST=0.0.0.0
+      - PORT=8000
+      - WORKERS=${WORKERS:-4}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG=${DEBUG:-false}
+
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+
+      # Celery
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ASYNC_PROCESSING_ENABLED=${ASYNC_PROCESSING_ENABLED:-true}
+
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
+
+      # API Keys (pass from host .env)
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - OXYLABS_USERNAME=${OXYLABS_USERNAME}
+      - OXYLABS_PASSWORD=${OXYLABS_PASSWORD}
+      - GROK_API_KEY=${GROK_API_KEY}
+      - GROK_API_KEY_1=${GROK_API_KEY_1:-}
+      - GROK_API_KEY_2=${GROK_API_KEY_2:-}
+      - GROK_API_KEY_3=${GROK_API_KEY_3:-}
+
+      # Timeouts
+      - SERPER_TIMEOUT=${SERPER_TIMEOUT:-30}
+      - OXYLABS_TIMEOUT=${OXYLABS_TIMEOUT:-90}
+      - GROK_TIMEOUT=${GROK_TIMEOUT:-120}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-300}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - team-size-network
+
+  # ---------------------------------------------------------------------------
+  # Redis - Message Broker & Cache
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: team-size-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - team-size-network
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker - Async Task Processing
+  # ---------------------------------------------------------------------------
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: team-size-celery-worker
+    env_file:
+      - .env.local
+    command: celery -A src.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-8}
+    environment:
+      # Redis/Celery
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CELERY_WORKER_CONCURRENCY=${CELERY_CONCURRENCY:-8}
+
+      # API Keys
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - OXYLABS_USERNAME=${OXYLABS_USERNAME}
+      - OXYLABS_PASSWORD=${OXYLABS_PASSWORD}
+      - GROK_API_KEY=${GROK_API_KEY}
+      - GROK_API_KEY_1=${GROK_API_KEY_1:-}
+      - GROK_API_KEY_2=${GROK_API_KEY_2:-}
+      - GROK_API_KEY_3=${GROK_API_KEY_3:-}
+
+      # Timeouts
+      - SERPER_TIMEOUT=${SERPER_TIMEOUT:-30}
+      - OXYLABS_TIMEOUT=${OXYLABS_TIMEOUT:-90}
+      - GROK_TIMEOUT=${GROK_TIMEOUT:-120}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-300}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - team-size-network
+    # Scale workers: docker-compose up -d --scale celery-worker=4
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # ---------------------------------------------------------------------------
+  # Flower - Celery Monitoring (Optional)
+  # ---------------------------------------------------------------------------
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: team-size-flower
+    env_file:
+      - .env.local
+    command: celery -A src.worker.celery_app flower --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+    depends_on:
+      - redis
+      - celery-worker
+    restart: unless-stopped
+    networks:
+      - team-size-network
+    profiles:
+      - monitoring  # Only starts with: docker-compose --profile monitoring up
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  team-size-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  redis-data:
+    driver: local

@@ -1,0 +1,33 @@
+# Railway Configuration for Team Size Webhook API
+# This configures multiple services: web (FastAPI) and worker (Celery)
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+# Web Service (FastAPI)
+[[services]]
+name = "web"
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+[services.deploy]
+startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT --workers 2"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Celery Worker Service
+[[services]]
+name = "celery-worker"
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+[services.deploy]
+# Note: Adjust concurrency based on your Railway plan's memory limits
+# Free/Hobby (512MB-1GB): --concurrency=2
+# Pro with 2GB: --concurrency=4
+# Pro with 4GB+: --concurrency=8
+# Pro with 8GB+: --concurrency=20
+startCommand = "celery -A src.worker.celery_app worker --loglevel=info --concurrency=20"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
